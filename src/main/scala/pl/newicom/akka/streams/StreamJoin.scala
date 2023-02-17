@@ -10,8 +10,8 @@ import scala.annotation.unused
 import scala.math.Ordered.orderingToOrdered
 
 class StreamJoin[O: Ordering, LKT <: KeyType, RKT <: KeyType, L, R, LR](
-    zipper: PartialFunction[(Option[L], Option[R]), LR],
-    join: Join[O, LKT, RKT, L, R]
+  zipper: PartialFunction[(Option[L], Option[R]), LR],
+  join: Join[O, LKT, RKT, L, R]
 ) extends GraphStage[FanInShape2[L, R, LR]] {
   override val shape: FanInShape2[L, R, LR] =
     new FanInShape2("StreamJoin")
@@ -21,9 +21,8 @@ class StreamJoin[O: Ordering, LKT <: KeyType, RKT <: KeyType, L, R, LR](
   private val out                = shape.out
   private val joinType: JoinType = join.joinType
 
-  private val comparator: (L, R) => Int = {
-    (l, r) =>
-      join.leftKey(l).asInstanceOf[JoinKey[O, KeyType]] compareTo join.rightKey(r).asInstanceOf[JoinKey[O, KeyType]]
+  private val comparator: (L, R) => Int = { (l, r) =>
+    join.leftKey(l).asInstanceOf[JoinKey[O, KeyType]] compareTo join.rightKey(r).asInstanceOf[JoinKey[O, KeyType]]
   }
 
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic with StageLogging =
@@ -90,63 +89,72 @@ class StreamJoin[O: Ordering, LKT <: KeyType, RKT <: KeyType, L, R, LR](
         dispatch()
       }
 
-      def readR(andThen: R => Unit = dispatchR): Unit = read(right)(
-        r => {
-          rightValue = r
-          andThen(r)
-        },
-        onClose = () =>
-          joinType match {
-            case Inner =>
-              completeStage()
-            case _ =>
-              if (comparator(leftValue, rightValue) <= 0) {
-                readL()
+      def readR(andThen: R => Unit = dispatchR): Unit =
+        read(right)(
+          r => {
+            rightValue = r
+            andThen(r)
+          },
+          onClose = () =>
+            joinType match {
+              case Inner =>
+                completeStage()
+              case _ =>
+                if (comparator(leftValue, rightValue) <= 0) {
+                  readL()
+                } else {
+                  tryEmit(Some(leftValue), None, readL())
+                }
+            }
+        )
+
+      def readL(andThen: L => Unit = dispatchL): Unit =
+        read(left)(
+          l => {
+            leftValue = l
+            andThen(l)
+          },
+          onClose = () =>
+            if (joinType == Full) {
+              val cv = comparator.apply(leftValue, rightValue)
+              if (cv < 0) {
+                tryEmit(None, Some(rightValue), read(right)(r => { rightValue = r; readL(andThen) }, () => completeStage()))
+              } else if (cv == 0) {
+                read(right)(r => { rightValue = r; readL(andThen) }, () => completeStage())
               } else {
-                tryEmit(Some(leftValue), None, readL())
+                completeStage()
               }
-          }
-      )
+            } else {
+              completeStage()
+            }
+        )
 
-      def readL(andThen: L => Unit = dispatchL): Unit = read(left)(
-        l => {
-          leftValue = l
-          andThen(l)
-        },
-        onClose = () =>
-          if (joinType == Full && comparator.apply(leftValue, rightValue) < 0) {
-            tryEmit(None, Some(rightValue), read(right)(r => { rightValue = r; readL(andThen) }, () => completeStage()))
-          } else {
-            completeStage()
-          }
-      )
-
-      private def start(): Unit = read(left)(
-        andThen = lv => {
-          leftValue = lv
-          read(right)(
-            andThen = { rv =>
-              rightValue = rv
-              dispatchR(rv)
-            },
-            onClose = () =>
-              tryEmit(Some(leftValue), None, start())
-          )
-        },
-        onClose = () => {
-          if (joinType == Full) {
+      private def start(): Unit =
+        read(left)(
+          andThen = lv => {
+            leftValue = lv
             read(right)(
               andThen = { rv =>
                 rightValue = rv
-                tryEmit(None, Some(rv), start())
+                dispatchR(rv)
               },
-              onClose = () => completeStage()
+              onClose = () => tryEmit(Some(leftValue), None, start())
             )
-          } else {
-            completeStage()
+          },
+          onClose = () => {
+            if (joinType == Full) {
+              read(right)(
+                andThen = { rv =>
+                  rightValue = rv
+                  tryEmit(None, Some(rv), start())
+                },
+                onClose = () => completeStage()
+              )
+            } else {
+              completeStage()
+            }
           }
-        }
-      )
+        )
 
       override def preStart(): Unit = {
         // all fan-in stages need to eagerly pull all inputs to get cycles started
@@ -158,8 +166,9 @@ class StreamJoin[O: Ordering, LKT <: KeyType, RKT <: KeyType, L, R, LR](
 }
 
 object StreamJoin {
+
   implicit class StreamOps[E](source: Source[E, NotUsed]) {
-    def asSorted[O: Ordering, KT <: KeyType](key: E => JoinKey[O, KT]): SortedSource[O, KT, E] =
+    def asSorted[O, KT <: KeyType](implicit key: E => JoinKey[O, KT]): SortedSource[O, KT, E] =
       SortedSource(source, key)
   }
 
@@ -187,15 +196,20 @@ object StreamJoin {
 
   implicit class SortedUniqueStreamOps[O: Ordering, L](leftSource: SortedSource[O, UniqueKey.type, L]) {
     def fullJoin[R](rightSource: SortedSource[O, UniqueKey.type, R]): Source[(Option[L], Option[R]), NotUsed] =
-      StreamJoin(leftSource.source, rightSource.source)(
-        Join(leftSource.key, rightSource.key, Full)
-      )
+      StreamJoin(leftSource.source, rightSource.source)(Join(leftSource.key, rightSource.key, Full))
+
+    def merge(rightSource: SortedSource[O, UniqueKey.type, L]): Source[L, NotUsed] =
+      leftSource.fullJoin(rightSource) collect {
+        case (Some(leftElement), _)     => leftElement
+        case (None, Some(rightElement)) => rightElement
+      }
+
   }
 
   implicit def joinKeyOrdering[O: Ordering]: Ordering[JoinKey[O, KeyType]] =
     Ordering.by[JoinKey[O, KeyType], O](_.value)
 
-  case class JoinKey[O: Ordering, KT <: KeyType](value: O, keyType: KT)
+  case class JoinKey[O, KT <: KeyType](value: O, keyType: KT)
 
   sealed trait KeyType
   case object UniqueKey    extends KeyType
@@ -213,9 +227,9 @@ object StreamJoin {
   case object Full      extends JoinType
 
   case class Join[O: Ordering, LKT <: KeyType, RKT <: KeyType, L, R](
-      leftKey: L => JoinKey[O, LKT],
-      rightKey: R => JoinKey[O, RKT],
-      joinType: JoinType
+    leftKey: L => JoinKey[O, LKT],
+    rightKey: R => JoinKey[O, RKT],
+    joinType: JoinType
   ) {
     def leftKeyType(l: L): KeyType =
       leftKey(l).keyType
@@ -224,13 +238,10 @@ object StreamJoin {
       rightKey(r).keyType
   }
 
-  case class SortedSource[O: Ordering, KT <: KeyType, E](source: Source[E, NotUsed], key: E => JoinKey[O, KT])
+  case class SortedSource[O, KT <: KeyType, E](source: Source[E, NotUsed], key: E => JoinKey[O, KT])
 
-  def apply[O: Ordering, LKT <: KeyType, RKT <: KeyType, L, R](
-      leftSource: Source[L, NotUsed],
-      rightSource: Source[R, NotUsed]
-  )(
-      join: Join[O, LKT, RKT, L, R]
+  def apply[O: Ordering, LKT <: KeyType, RKT <: KeyType, L, R](leftSource: Source[L, NotUsed], rightSource: Source[R, NotUsed])(
+    join: Join[O, LKT, RKT, L, R]
   ): Source[(Option[L], Option[R]), NotUsed] =
     apply(
       leftSource,
@@ -244,10 +255,10 @@ object StreamJoin {
     )
 
   def apply[O: Ordering, LKT <: KeyType, RKT <: KeyType, L, R, LR](
-      leftSource: Source[L, NotUsed],
-      rightSource: Source[R, NotUsed],
-      join: Join[O, LKT, RKT, L, R],
-      zipper: PartialFunction[(Option[L], Option[R]), LR]
+    leftSource: Source[L, NotUsed],
+    rightSource: Source[R, NotUsed],
+    join: Join[O, LKT, RKT, L, R],
+    zipper: PartialFunction[(Option[L], Option[R]), LR]
   ): Source[LR, NotUsed] = {
     Source.fromGraph(GraphDSL.create() { implicit builder =>
       import GraphDSL.Implicits._

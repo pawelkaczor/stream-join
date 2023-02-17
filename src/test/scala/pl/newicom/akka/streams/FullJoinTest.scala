@@ -6,7 +6,7 @@ import akka.stream.scaladsl.{Sink, Source}
 import akka.testkit.TestKit
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AsyncWordSpecLike
-import pl.newicom.akka.streams.StreamJoin.{StreamOps, uniqueKey}
+import pl.newicom.akka.streams.StreamJoin.{JoinKey, StreamOps, UniqueKey, uniqueKey}
 
 import scala.concurrent.Future
 
@@ -149,7 +149,7 @@ class FullJoinTest extends TestKit(ActorSystem("test")) with AsyncWordSpecLike w
       ))
     }
 
-    "emit None at the end if no matching element on the right" in {
+    "emit None at the end if no matching element on the right (1)" in {
       // given
       val left  = Source(Seq(1, 2, 3, 4))
       val right = Source(Seq(1, 2, 3, 5, 6, 7))
@@ -164,6 +164,50 @@ class FullJoinTest extends TestKit(ActorSystem("test")) with AsyncWordSpecLike w
         (None, Some(6)),
         (None, Some(7))
       ))
+    }
+
+    "emit None at the end if no matching element on the right (2)" in {
+      // given
+      val left  = Source(Seq(2, 5, 6))
+      val right = Source(Seq(1, 2, 3, 5, 6, 7))
+
+      // when/then
+      fullJoin(left, right) map (_ shouldBe Seq(
+        (None, Some(1)),
+        (Some(2), Some(2)),
+        (None, Some(3)),
+        (Some(5), Some(5)),
+        (Some(6), Some(6)),
+        (None, Some(7))
+      ))
+    }
+
+    "handle merge (1)" in {
+      // given
+      val left  = Source(Seq(("2", 2), ("5", 5), ("6", 6)))
+      val right = Source(Seq(("one", 1), ("two", 2), ("three", 3), ("five", 5), ("six", 6), ("seven", 7)))
+
+      implicit val jkp: ((String, Int)) => JoinKey[Int, UniqueKey.type] = { case (_, v) => uniqueKey(v) }
+
+      // when/then
+      left.asSorted
+        .merge(right.asSorted)
+        .runWith(Sink.seq)
+        .map(_.map(_._1) shouldBe Seq("one", "2", "three", "5", "6", "seven"))
+    }
+
+    "handle merge (2)" in {
+      // given
+      val left  = Source(Seq(("one", 1), ("two", 2), ("three", 3), ("five", 5), ("six", 6), ("seven", 7)))
+      val right = Source(Seq(("2", 2), ("5", 5), ("6", 6)))
+
+      implicit val jkp: ((String, Int)) => JoinKey[Int, UniqueKey.type] = { case (_, v) => uniqueKey(v) }
+
+      // when/then
+      left.asSorted
+        .merge(right.asSorted)
+        .runWith(Sink.seq)
+        .map(_.map(_._1) shouldBe Seq("one", "two", "three", "five", "six", "seven"))
     }
 
   }
