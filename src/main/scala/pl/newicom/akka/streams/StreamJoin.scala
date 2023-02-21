@@ -198,11 +198,12 @@ object StreamJoin {
     def fullJoin[R](rightSource: SortedSource[O, UniqueKey.type, R]): Source[(Option[L], Option[R]), NotUsed] =
       StreamJoin(leftSource.source, rightSource.source)(Join(leftSource.key, rightSource.key, Full))
 
-    def merge(rightSource: SortedSource[O, UniqueKey.type, L]): Source[L, NotUsed] =
-      leftSource.fullJoin(rightSource) collect {
+    def merge(rightSource: SortedSource[O, UniqueKey.type, L], terminalElement: L): Source[L, NotUsed] = {
+      leftSource.fullJoin(rightSource.copy(source = rightSource.source.concat(Source.single(terminalElement)))) collect {
         case (Some(leftElement), _)     => leftElement
-        case (None, Some(rightElement)) => rightElement
+        case (None, Some(rightElement)) if rightElement != terminalElement => rightElement
       }
+    }
 
   }
 

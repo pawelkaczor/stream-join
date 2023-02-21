@@ -191,7 +191,7 @@ class FullJoinTest extends TestKit(ActorSystem("test")) with AsyncWordSpecLike w
 
       // when/then
       left.asSorted
-        .merge(right.asSorted)
+        .merge(right.asSorted, terminalElement = ("terminal", 100))
         .runWith(Sink.seq)
         .map(_.map(_._1) shouldBe Seq("one", "2", "three", "5", "6", "seven"))
     }
@@ -205,9 +205,37 @@ class FullJoinTest extends TestKit(ActorSystem("test")) with AsyncWordSpecLike w
 
       // when/then
       left.asSorted
-        .merge(right.asSorted)
+        .merge(right.asSorted, terminalElement = ("terminal", 100))
         .runWith(Sink.seq)
         .map(_.map(_._1) shouldBe Seq("one", "two", "three", "five", "six", "seven"))
+    }
+
+    "handle merge (3)" in {
+      // given
+      val left  = Source(Seq(("one", 1), ("three", 3), ("five", 5), ("six", 6), ("seven", 7)))
+      val right = Source(Seq(("two", 2), ("four", 4)))
+
+      implicit val jkp: ((String, Int)) => JoinKey[Int, UniqueKey.type] = { case (_, v) => uniqueKey(v) }
+
+      // when/then
+      left.asSorted
+        .merge(right.asSorted, terminalElement = ("ten", 10))
+        .runWith(Sink.seq)
+        .map(_.map(_._1) shouldBe Seq("one", "two", "three", "four", "five", "six", "seven"))
+    }
+
+    "handle merge (4)" in {
+      // given
+      val left  = Source(Seq(("two", 2), ("four", 4)))
+      val right = Source(Seq(("one", 1), ("three", 3), ("five", 5), ("six", 6), ("seven", 7)))
+
+      implicit val jkp: ((String, Int)) => JoinKey[Int, UniqueKey.type] = { case (_, v) => uniqueKey(v) }
+
+      // when/then
+      left.asSorted
+        .merge(right.asSorted, terminalElement = ("ten", 10))
+        .runWith(Sink.seq)
+        .map(_.map(_._1) shouldBe Seq("one", "two", "three", "four", "five", "six", "seven"))
     }
 
   }
