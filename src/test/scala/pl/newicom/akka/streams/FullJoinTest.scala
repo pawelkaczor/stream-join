@@ -191,7 +191,7 @@ class FullJoinTest extends TestKit(ActorSystem("test")) with AsyncWordSpecLike w
 
       // when/then
       left.asSorted
-        .merge(right.asSorted, terminalElement = ("terminal", 100))
+        .merge(right.asSorted)
         .runWith(Sink.seq)
         .map(_.map(_._1) shouldBe Seq("one", "2", "three", "5", "6", "seven"))
     }
@@ -205,7 +205,7 @@ class FullJoinTest extends TestKit(ActorSystem("test")) with AsyncWordSpecLike w
 
       // when/then
       left.asSorted
-        .merge(right.asSorted, terminalElement = ("terminal", 100))
+        .merge(right.asSorted)
         .runWith(Sink.seq)
         .map(_.map(_._1) shouldBe Seq("one", "two", "three", "five", "six", "seven"))
     }
@@ -219,7 +219,7 @@ class FullJoinTest extends TestKit(ActorSystem("test")) with AsyncWordSpecLike w
 
       // when/then
       left.asSorted
-        .merge(right.asSorted, terminalElement = ("ten", 10))
+        .merge(right.asSorted)
         .runWith(Sink.seq)
         .map(_.map(_._1) shouldBe Seq("one", "two", "three", "four", "five", "six", "seven"))
     }
@@ -233,7 +233,7 @@ class FullJoinTest extends TestKit(ActorSystem("test")) with AsyncWordSpecLike w
 
       // when/then
       left.asSorted
-        .merge(right.asSorted, terminalElement = ("zero", 0))
+        .merge(right.asSorted)
         .runWith(Sink.seq)
         .map(_.map(_._1) shouldBe Seq("one", "two", "three", "four", "five", "six", "seven"))
     }

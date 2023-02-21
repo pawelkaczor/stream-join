@@ -196,12 +196,30 @@ object StreamJoin {
 
   implicit class SortedUniqueStreamOps[O: Ordering, L](leftSource: SortedSource[O, UniqueKey.type, L]) {
     def fullJoin[R](rightSource: SortedSource[O, UniqueKey.type, R]): Source[(Option[L], Option[R]), NotUsed] =
+      fullJoin(leftSource, rightSource)
+
+    private def fullJoin[A, B, OO : Ordering](
+      leftSource: SortedSource[OO, UniqueKey.type, A],
+      rightSource: SortedSource[OO, UniqueKey.type, B]
+    ): Source[(Option[A], Option[B]), NotUsed] =
       StreamJoin(leftSource.source, rightSource.source)(Join(leftSource.key, rightSource.key, Full))
 
-    def merge(rightSource: SortedSource[O, UniqueKey.type, L], terminalElement: L): Source[L, NotUsed] = {
-      leftSource.fullJoin(rightSource.copy(source = rightSource.source.concat(Source.single(terminalElement)))) collect {
-        case (Some(leftElement), _)     => leftElement
-        case (None, Some(rightElement)) if rightElement != terminalElement => rightElement
+    def merge(rightSource: SortedSource[O, UniqueKey.type, L]): Source[L, NotUsed] = {
+      val ll: SortedSource[Option[O], UniqueKey.type, Option[L]] =
+        SortedSource(leftSource.source.map(e => Some(e)), {
+          case Some(e) => JoinKey(Some(leftSource.key(e).value), UniqueKey)
+          case None => JoinKey(None, UniqueKey)
+        })
+
+      val rr: SortedSource[Option[O], UniqueKey.type, Option[L]] =
+        SortedSource(rightSource.source.map(e => Some(e)).concat(Source.single(None)), {
+          case Some(e) => JoinKey(Some(leftSource.key(e).value), UniqueKey)
+          case None => JoinKey(None, UniqueKey)
+        })
+
+      fullJoin(ll, rr) collect {
+        case (Some(Some(leftElement)), _)     => leftElement
+        case (None, Some(Some(rightElement))) => rightElement
       }
     }
 
