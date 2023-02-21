@@ -233,7 +233,7 @@ class FullJoinTest extends TestKit(ActorSystem("test")) with AsyncWordSpecLike w
 
       // when/then
       left.asSorted
-        .merge(right.asSorted, terminalElement = ("ten", 10))
+        .merge(right.asSorted, terminalElement = ("zero", 0))
         .runWith(Sink.seq)
         .map(_.map(_._1) shouldBe Seq("one", "two", "three", "four", "five", "six", "seven"))
     }
